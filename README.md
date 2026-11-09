@@ -510,7 +510,7 @@ For changes involving model training or data processing, please include relevant
 
 <br/>
 
-[![GitHub](https://img.shields.io/badge/GitHub-Conformitty-181717?style=for-the-badge&logo=github)](https://github.com/Conformitty)
+[![GitHub](https://img.shields.io/badge/GitHub-Confomitty-181717?style=for-the-badge&logo=github)](https://github.com/Confomitty)
 
 <sub>Silk Board Waterlogging Risk Prediction · Bengaluru, India · 2026</sub>
 

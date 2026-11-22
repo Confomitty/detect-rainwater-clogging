@@ -1,10 +1,13 @@
+
 import ee
+import requests
+from pathlib import Path
 
 
-def download_terrain(latitude, longitude, radius, area_name):
+def download_terrain(latitude, longitude, radius, output_dir):
     """
-    Export elevation and slope rasters for the selected study area
-    from Google Earth Engine to Google Drive.
+    Download elevation and slope GeoTIFFs from Google Earth Engine
+    directly into the selected study area's raw/terrain directory.
     """
 
     PROJECT_ID = "waterloggingbengaluru"
@@ -16,13 +19,18 @@ def download_terrain(latitude, longitude, radius, area_name):
         ee.Authenticate()
         ee.Initialize(project=PROJECT_ID)
 
-    # Define selected study area
+    # Create output directory
+    terrain_dir = Path(output_dir) / "terrain"
+    terrain_dir.mkdir(parents=True, exist_ok=True)
+
+    # Define study area
     center = ee.Geometry.Point([longitude, latitude])
     region = center.buffer(radius)
 
-    print(f"Preparing terrain exports for {area_name}...")
+    print("Preparing terrain downloads...")
     print(f"Coordinates: {latitude}, {longitude}")
     print(f"Radius: {radius} metres")
+    print(f"Output directory: {terrain_dir}")
 
     # Load Copernicus DEM
     dem_collection = ee.ImageCollection(
@@ -36,42 +44,43 @@ def download_terrain(latitude, longitude, radius, area_name):
         .clip(region)
     )
 
-    # Calculate terrain slope
+    # Calculate slope
     slope = ee.Terrain.slope(dem)
 
-    # Create area-specific export names
-    area_prefix = area_name.lower().replace(" ", "_")
+    # Prepare export parameters
+    export_params = {
+        "region": region,
+        "scale": 30,
+        "crs": "EPSG:32643",
+        "format": "GEO_TIFF"
+    }
 
-    # Export elevation
-    dem_task = ee.batch.Export.image.toDrive(
-        image=dem,
-        description=f"{area_prefix}_Elevation",
-        folder="Waterlogging_Data",
-        fileNamePrefix=f"{area_prefix}_elevation",
-        region=region,
-        scale=30,
-        crs="EPSG:32643",
-        maxPixels=1e13
-    )
+    # Download elevation
+    print("\nDownloading elevation raster...")
 
-    dem_task.start()
+    elevation_url = dem.getDownloadURL(export_params)
+    elevation_path = terrain_dir / "elevation.tif"
 
-    # Export slope
-    slope_task = ee.batch.Export.image.toDrive(
-        image=slope,
-        description=f"{area_prefix}_Slope",
-        folder="Waterlogging_Data",
-        fileNamePrefix=f"{area_prefix}_slope",
-        region=region,
-        scale=30,
-        crs="EPSG:32643",
-        maxPixels=1e13
-    )
+    response = requests.get(elevation_url, timeout=180)
+    response.raise_for_status()
 
-    slope_task.start()
+    elevation_path.write_bytes(response.content)
 
-    print("\nTerrain exports started successfully!")
-    print("Elevation task ID:", dem_task.id)
-    print("Slope task ID:", slope_task.id)
+    print("Elevation saved:", elevation_path)
 
-    return dem_task, slope_task
+    # Download slope
+    print("\nDownloading slope raster...")
+
+    slope_url = slope.getDownloadURL(export_params)
+    slope_path = terrain_dir / "slope.tif"
+
+    response = requests.get(slope_url, timeout=180)
+    response.raise_for_status()
+
+    slope_path.write_bytes(response.content)
+
+    print("Slope saved:", slope_path)
+
+    print("\nTerrain downloads completed successfully!")
+
+    return elevation_path, slope_path

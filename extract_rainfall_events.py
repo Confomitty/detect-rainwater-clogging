@@ -3,207 +3,226 @@ import json
 
 from pathlib import Path
 
-# -----------------------------------------
-# CONFIGURATION
-# -----------------------------------------
 
-INPUT_FILE = "data/raw/rainfall/rainfall_hourly.csv"
+def extract_rainfall_events(raw_dir, processed_dir, area_name):
+    """
+    Extract rainfall events for a selected study area.
 
-OUTPUT_DIR = Path("data/processed/rainfall")
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    Parameters
+    ----------
+    raw_dir : Path or str
+        Area-specific raw data directory.
+    processed_dir : Path or str
+        Area-specific processed data directory.
+    area_name : str
+        Name of the selected study area.
+    """
 
-RAIN_THRESHOLD_MM = 0.1
-DRY_GAP_HOURS = 6
+    # -----------------------------------------
+    # CONFIGURATION
+    # -----------------------------------------
 
+    INPUT_FILE = Path(raw_dir) / "rainfall" / "rainfall_hourly.csv"
 
-# -----------------------------------------
-# LOAD DATA
-# -----------------------------------------
+    OUTPUT_DIR = Path(processed_dir) / "rainfall"
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-df = pd.read_csv(INPUT_FILE, parse_dates=["timestamp"])
+    RAIN_THRESHOLD_MM = 0.1
+    DRY_GAP_HOURS = 6
 
-df = df.sort_values("timestamp").reset_index(drop=True)
+    if not INPUT_FILE.exists():
+        raise FileNotFoundError(
+            f"Rainfall input file not found: {INPUT_FILE}"
+        )
 
-if df["precipitation_mm"].isna().any():
-    raise ValueError("Missing hourly precipitation values detected.")
+    # -----------------------------------------
+    # LOAD DATA
+    # -----------------------------------------
 
-if df["timestamp"].duplicated().any():
-    raise ValueError("Duplicate timestamps detected.")
+    df = pd.read_csv(INPUT_FILE, parse_dates=["timestamp"])
 
-if not df["timestamp"].diff().dropna().eq(
-    pd.Timedelta(hours=1)
-).all():
-    raise ValueError("Hourly timestamps are not continuous.")
+    df = df.sort_values("timestamp").reset_index(drop=True)
 
-print("Loaded hourly records:", len(df))
+    if df["precipitation_mm"].isna().any():
+        raise ValueError("Missing hourly precipitation values detected.")
 
+    if df["timestamp"].duplicated().any():
+        raise ValueError("Duplicate timestamps detected.")
 
-# -----------------------------------------
-# IDENTIFY WET HOURS
-# -----------------------------------------
+    if not df["timestamp"].diff().dropna().eq(
+        pd.Timedelta(hours=1)
+    ).all():
+        raise ValueError("Hourly timestamps are not continuous.")
 
-wet = df["precipitation_mm"] >= RAIN_THRESHOLD_MM
+    print(f"Processing rainfall events for {area_name}...")
+    print("Loaded hourly records:", len(df))
 
-wet_indices = df.index[wet].tolist()
+    # -----------------------------------------
+    # IDENTIFY WET HOURS
+    # -----------------------------------------
 
-events = []
-event_ids = pd.Series(index=df.index, dtype="object")
+    wet = df["precipitation_mm"] >= RAIN_THRESHOLD_MM
 
-if wet_indices:
+    wet_indices = df.index[wet].tolist()
 
-    # Start a new event when the gap between
-    # wet hours is greater than 6 hours.
+    events = []
+    event_ids = pd.Series(index=df.index, dtype="object")
 
-    groups = []
-    current_group = [wet_indices[0]]
+    if wet_indices:
 
-    for index in wet_indices[1:]:
+        groups = []
+        current_group = [wet_indices[0]]
 
-        previous = current_group[-1]
+        for index in wet_indices[1:]:
 
-        gap = (
-            df.loc[index, "timestamp"]
-            - df.loc[previous, "timestamp"]
-        ).total_seconds() / 3600
+            previous = current_group[-1]
 
-        if gap > DRY_GAP_HOURS:
-            groups.append(current_group)
-            current_group = [index]
-        else:
-            current_group.append(index)
+            gap = (
+                df.loc[index, "timestamp"]
+                - df.loc[previous, "timestamp"]
+            ).total_seconds() / 3600
 
-    groups.append(current_group)
+            if gap > DRY_GAP_HOURS:
+                groups.append(current_group)
+                current_group = [index]
+            else:
+                current_group.append(index)
 
+        groups.append(current_group)
 
-    # -------------------------------------
-    # CALCULATE EVENT FEATURES
-    # -------------------------------------
+        # -------------------------------------
+        # CALCULATE EVENT FEATURES
+        # -------------------------------------
 
-    for number, group in enumerate(groups, start=1):
+        for number, group in enumerate(groups, start=1):
 
-        first_idx = group[0]
-        last_idx = group[-1]
+            first_idx = group[0]
+            last_idx = group[-1]
 
-        start_time = df.loc[first_idx, "timestamp"]
-        end_time = df.loc[last_idx, "timestamp"]
+            start_time = df.loc[first_idx, "timestamp"]
+            end_time = df.loc[last_idx, "timestamp"]
 
-        event_rows = df.loc[first_idx:last_idx]
+            event_rows = df.loc[first_idx:last_idx]
 
-        # Rainfall during the 24 hours
-        # immediately preceding the event.
-        antecedent_start = start_time - pd.Timedelta(hours=24)
+            # Rainfall during the 24 hours
+            # immediately preceding the event.
+            antecedent_start = start_time - pd.Timedelta(hours=24)
 
-        antecedent_rows = df[
-            (df["timestamp"] >= antecedent_start) &
-            (df["timestamp"] < start_time)
-        ]
+            antecedent_rows = df[
+                (df["timestamp"] >= antecedent_start) &
+                (df["timestamp"] < start_time)
+            ]
 
-        event_id = f"EVT_{number:04d}"
+            event_id = f"EVT_{number:04d}"
 
-        event_ids.loc[first_idx:last_idx] = event_id
+            event_ids.loc[first_idx:last_idx] = event_id
 
-        events.append({
+            events.append({
 
-            "event_id": event_id,
+                "event_id": event_id,
 
-            "event_start": start_time,
-            "event_end": end_time,
+                "event_start": start_time,
+                "event_end": end_time,
 
-            "duration_hours": len(event_rows),
+                "duration_hours": len(event_rows),
 
-            "wet_hours": len(group),
+                "wet_hours": len(group),
 
-            "total_precipitation_mm":
-                event_rows["precipitation_mm"].sum(),
+                "total_precipitation_mm":
+                    event_rows["precipitation_mm"].sum(),
 
-            "peak_hourly_rainfall_mm":
-                event_rows["precipitation_mm"].max(),
+                "peak_hourly_rainfall_mm":
+                    event_rows["precipitation_mm"].max(),
 
-            "max_3h_rainfall_mm":
-                event_rows["rainfall_3h_mm"].max(),
+                "max_3h_rainfall_mm":
+                    event_rows["rainfall_3h_mm"].max(),
 
-            "max_6h_rainfall_mm":
-                event_rows["rainfall_6h_mm"].max(),
+                "max_6h_rainfall_mm":
+                    event_rows["rainfall_6h_mm"].max(),
 
-            "antecedent_24h_rainfall_mm":
-                antecedent_rows["precipitation_mm"].sum()
+                "antecedent_24h_rainfall_mm":
+                    antecedent_rows["precipitation_mm"].sum()
 
-        })
+            })
 
+    # -----------------------------------------
+    # SAVE EVENT DATASET
+    # -----------------------------------------
 
-# -----------------------------------------
-# SAVE EVENT DATASET
-# -----------------------------------------
+    events_df = pd.DataFrame(events)
 
-events_df = pd.DataFrame(events)
+    events_path = OUTPUT_DIR / "rainfall_events.csv"
 
-events_path = OUTPUT_DIR / "rainfall_events.csv"
+    events_df.to_csv(events_path, index=False)
 
-events_df.to_csv(events_path, index=False)
+    # -----------------------------------------
+    # SAVE HOURLY EVENT MAPPING
+    # -----------------------------------------
 
+    df["event_id"] = event_ids
 
-# -----------------------------------------
-# SAVE HOURLY EVENT MAPPING
-# -----------------------------------------
+    hourly_path = OUTPUT_DIR / "rainfall_hourly_with_events.csv"
 
-df["event_id"] = event_ids
+    df.to_csv(hourly_path, index=False)
 
-hourly_path = OUTPUT_DIR / "rainfall_hourly_with_events.csv"
+    # -----------------------------------------
+    # SAVE EVENT DEFINITION
+    # -----------------------------------------
 
-df.to_csv(hourly_path, index=False)
+    metadata = {
+        "area": area_name,
+        "rain_threshold_mm": RAIN_THRESHOLD_MM,
+        "dry_gap_hours": DRY_GAP_HOURS,
+        "event_definition": (
+            "Wet hours separated by more than the configured "
+            "dry gap are treated as separate events."
+        ),
+        "number_of_events": len(events_df),
+        "source_file": str(INPUT_FILE)
+    }
 
+    metadata_path = OUTPUT_DIR / "event_definition.json"
 
-# -----------------------------------------
-# SAVE EVENT DEFINITION
-# -----------------------------------------
+    with open(
+        metadata_path,
+        "w",
+        encoding="utf-8"
+    ) as f:
+        json.dump(metadata, f, indent=4)
 
-metadata = {
-    "rain_threshold_mm": RAIN_THRESHOLD_MM,
-    "dry_gap_hours": DRY_GAP_HOURS,
-    "event_definition": (
-        "Wet hours separated by more than the configured "
-        "dry gap are treated as separate events."
-    ),
-    "number_of_events": len(events_df),
-    "source_file": INPUT_FILE
-}
+    # -----------------------------------------
+    # SUMMARY
+    # -----------------------------------------
 
-with open(
-    OUTPUT_DIR / "event_definition.json",
-    "w",
-    encoding="utf-8"
-) as f:
-    json.dump(metadata, f, indent=4)
+    print("\n-------------------------------")
+    print(f"RAINFALL EVENT EXTRACTION: {area_name}")
+    print("-------------------------------")
 
+    print("Total hourly records:", len(df))
+    print("Rainfall events detected:", len(events_df))
 
-# -----------------------------------------
-# SUMMARY
-# -----------------------------------------
+    if not events_df.empty:
 
-print("\n-------------------------------")
-print("RAINFALL EVENT EXTRACTION")
-print("-------------------------------")
+        print(
+            "Maximum event rainfall:",
+            events_df["total_precipitation_mm"].max(),
+            "mm"
+        )
 
-print("Total hourly records:", len(df))
-print("Rainfall events detected:", len(events_df))
+        print(
+            "Maximum event duration:",
+            events_df["duration_hours"].max(),
+            "hours"
+        )
 
-if not events_df.empty:
+        print("\nFirst five events:")
+        print(events_df.head())
 
-    print(
-        "Maximum event rainfall:",
-        events_df["total_precipitation_mm"].max(),
-        "mm"
-    )
+    print("\nSaved:")
+    print(events_path)
+    print(hourly_path)
+    print(metadata_path)
 
-    print(
-        "Maximum event duration:",
-        events_df["duration_hours"].max(),
-        "hours"
-    )
+    return events_df, df
 
-    print("\nFirst five events:")
-    print(events_df.head())
 
-print("\nSaved:")
-print(events_path)
-print(hourly_path)

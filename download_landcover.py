@@ -1,40 +1,70 @@
 import ee
 import requests
+
 from pathlib import Path
 
-PROJECT_ID = "waterloggingbengaluru"
 
-ee.Initialize(project=PROJECT_ID)
+def download_landcover(latitude, longitude, radius, output_dir):
+    """
+    Download ESA WorldCover data for the selected study area.
 
-# Study area: approximately 2 km around Silk Board
-center = ee.Geometry.Point([77.623, 12.917])
-region = center.buffer(2000)
+    Parameters
+    ----------
+    latitude : float
+        Study area centre latitude.
+    longitude : float
+        Study area centre longitude.
+    radius : int
+        Study area radius in metres.
+    output_dir : Path or str
+        Area-specific raw data directory.
+    """
 
-output_dir = Path("data/raw/landcover")
-output_dir.mkdir(parents=True, exist_ok=True)
+    PROJECT_ID = "waterloggingbengaluru"
 
-# ESA WorldCover 2021, 10 m resolution
-landcover = (
-    ee.ImageCollection("ESA/WorldCover/v200")
-    .first()
-    .select("Map")
-    .clip(region)
-)
+    # Initialize Earth Engine
+    try:
+        ee.Initialize(project=PROJECT_ID)
+    except Exception:
+        ee.Authenticate()
+        ee.Initialize(project=PROJECT_ID)
 
-print("Preparing WorldCover download...")
+    # Define selected study area
+    center = ee.Geometry.Point([longitude, latitude])
+    region = center.buffer(radius)
 
-url = landcover.getDownloadURL({
-    "scale": 10,
-    "crs": "EPSG:32643",
-    "region": region,
-    "format": "GEO_TIFF"
-})
+    # Create area-specific output directory
+    output_dir = Path(output_dir) / "landcover"
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-response = requests.get(url, timeout=120)
-response.raise_for_status()
+    # Load ESA WorldCover 2021, 10 m resolution
+    landcover = (
+        ee.ImageCollection("ESA/WorldCover/v200")
+        .first()
+        .select("Map")
+        .clip(region)
+    )
 
-filepath = output_dir / "landcover.tif"
-filepath.write_bytes(response.content)
+    print(f"Preparing WorldCover download for {latitude}, {longitude}...")
+    print(f"Study radius: {radius} metres")
 
-print("Saved:", filepath)
-print("Download size:", len(response.content), "bytes")
+    # Generate download URL
+    url = landcover.getDownloadURL({
+        "scale": 10,
+        "crs": "EPSG:32643",
+        "region": region,
+        "format": "GEO_TIFF"
+    })
+
+    # Download raster
+    response = requests.get(url, timeout=120)
+    response.raise_for_status()
+
+    filepath = output_dir / "landcover.tif"
+    filepath.write_bytes(response.content)
+
+    print("\nLand-cover download completed!")
+    print("Saved:", filepath)
+    print("Download size:", len(response.content), "bytes")
+
+    return filepath
